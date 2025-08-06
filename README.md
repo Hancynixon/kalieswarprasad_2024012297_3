@@ -64,4 +64,65 @@ Replace Node & Final Code Block
 
 
 
+Workflow Flowchart (Text Version)
+Webhook
+⮕ Trigger input received (via POST)
+
+Extract Schema
+⮕ Retrieves schema from input data
+
+Parse Schema
+⮕ Parses the extracted schema
+
+Rules Node
+⮕ Applies rule-based conditions or logic
+
+Generate Test Data
+⮕ Generates mock/test data for processing
+
+Validation Agent
+⮕ Validates test data using defined rules
+
+Merge All Results
+⮕ Consolidates validation output
+
+Dataset Sampling Nodes
+
+Netflix Sample Data
+
+E-commerce Sample Data
+
+Heart Disease Sample Data
+
+HR Sample Data
+
+Credit Card Fraud Data
+
+Merge Nodes
+
+Merge 1 = Netflix + E-commerce
+
+Merge 2 = Heart Disease + HR
+
+Merge 3 = Merge 1 + Merge 2
+
+Merge 4 = Merge 3 + Credit Card Fraud Data
+
+Loop Over Items
+⮕ Iterates over merged data
+
+Code Node
+⮕ Performs custom processing on each item
+
+Replace Me
+⮕ Placeholder for transformation or replacement logic
+
+Code1
+⮕ Final post-processing logic
+
+Respond to Webhook
+⮕ Sends back response with processed data
+
+
+
 
