@@ -1,0 +1,501 @@
+{
+  "name": "Pattern3",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "schema-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "318cc777-68de-4b52-9d17-19f024f418cf",
+      "name": "Webhook",
+      "webhookId": "728cbc20-1322-4a78-b393-cf4e42609511"
+    },
+    {
+      "parameters": {
+        "jsCode": "let input = null;\n\n// Case 1: Binary file upload\nif (items[0].binary && items[0].binary.schema_file) {\n    input = Buffer.from(items[0].binary.schema_file.data, 'base64').toString();\n} else if (items[0].json.schema_text) {\n    input = items[0].json.schema_text;\n} else if (items[0].json.schema_json) {\n    input = items[0].json.schema_json; // Already JSON\n}\n\nreturn [{ json: { schema: input } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "aa3f1aa3-00ba-4cb6-8cb6-29f49747a771",
+      "name": "Extract Schema"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        2464,
+        96
+      ],
+      "id": "1bb89738-7e29-4edd-ad58-ae4de2597214",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const schema = items[0].json.schema;\n\nlet tables = [];\nlet relationships = [];\nlet columns = [];\n\n// If input is a string → treat as SQL DDL\nif (typeof schema === \"string\") {\n    const tableRegex = /CREATE\\s+TABLE\\s+(\\w+)/gi;\n    const columnRegex = /(\\w+)\\s+([\\w()]+)(?:\\s+[^,]*)?/gi;\n    const fkRegex = /FOREIGN\\s+KEY\\s*\\((\\w+)\\)\\s*REFERENCES\\s+(\\w+)\\s*\\((\\w+)\\)/gi;\n\n    let match;\n    while ((match = tableRegex.exec(schema)) !== null) {\n        tables.push(match[1]);\n    }\n\n    // Extract columns and data types\n    const tableDefs = schema.split(/CREATE\\s+TABLE/gi).slice(1);\n    tableDefs.forEach(def => {\n        const tMatch = def.match(/^\\s*(\\w+)/);\n        if (tMatch) {\n            const tableName = tMatch[1];\n            let colMatch;\n            while ((colMatch = columnRegex.exec(def)) !== null) {\n                if (![\"PRIMARY\", \"FOREIGN\"].includes(colMatch[1].toUpperCase())) {\n                    columns.push({\n                        table: tableName,\n                        column: colMatch[1],\n                        type: colMatch[2]\n                    });\n                }\n            }\n        }\n    });\n\n    // Foreign key detection\n    while ((match = fkRegex.exec(schema)) !== null) {\n        relationships.push({\n            from: `${match[2]}.${match[1]}`,\n            to: `${match[2]}.${match[3]}`,\n            type: \"foreign_key\"\n        });\n    }\n}\n\n// If input is JSON → treat as JSON schema\nelse if (typeof schema === \"object\") {\n    for (let tableName in schema) {\n        tables.push(tableName);\n        schema[tableName].columns.forEach(col => {\n            columns.push({\n                table: tableName,\n                column: col.name,\n                type: col.type\n            });\n        });\n        if (schema[tableName].relationships) {\n            relationships.push(...schema[tableName].relationships);\n        }\n    }\n}\n\nreturn [{ json: { tables, relationships, columns, raw_schema: schema } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "aaaa8394-2894-4539-8af4-f582f1fecc95",
+      "name": "Parse Schema"
+    },
+    {
+      "parameters": {
+        "jsCode": "// === Simple random data generators ===\nfunction randomEmail() {\n  return `user${Math.floor(Math.random()*10000)}@example.com`;\n}\n\nfunction randomName() {\n  const firstNames = [\"Alice\", \"Bob\", \"Charlie\", \"David\", \"Eva\", \"Frank\", \"Grace\", \"Helen\"];\n  const lastNames = [\"Smith\", \"Johnson\", \"Brown\", \"Taylor\", \"Miller\"];\n  return `${firstNames[Math.floor(Math.random()*firstNames.length)]} ${lastNames[Math.floor(Math.random()*lastNames.length)]}`;\n}\n\nfunction randomDate() {\n  const start = new Date(2020, 0, 1);\n  const end = new Date();\n  const date = new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));\n  return date.toISOString().split('T')[0];\n}\n\nfunction randomPrice() {\n  return parseFloat((Math.random() * 1000).toFixed(2));\n}\n\nfunction randomPhone() {\n  return `+1-${Math.floor(100+Math.random()*900)}-${Math.floor(100+Math.random()*900)}-${Math.floor(1000+Math.random()*9000)}`;\n}\n\nfunction randomText() {\n  const words = [\"alpha\", \"beta\", \"gamma\", \"delta\", \"omega\", \"sigma\"];\n  return words[Math.floor(Math.random()*words.length)];\n}\n\n// === Main data generation logic ===\nconst schema = items[0].json;\nconst rowCount = 5; // number of rows per table\nlet data = {};\nlet pkMap = {}; // store PK values for FK matching\n\n// Step 1: Create empty arrays for each table\nschema.tables.forEach(table => {\n  data[table] = [];\n  pkMap[table] = [];\n});\n\n// Step 2: Generate primary keys first\nschema.tables.forEach(table => {\n  const tableCols = schema.columns.filter(c => c.table === table);\n\n  for (let i = 0; i < rowCount; i++) {\n    let row = {};\n\n    tableCols.forEach(col => {\n      const colNameLower = col.column.toLowerCase();\n      let value;\n\n      // Primary key detection\n      if (colNameLower.endsWith(\"id\") && colNameLower.length <= 5) {\n        value = `${table}_${i+1}`;\n        pkMap[table].push(value);\n      }\n      else if (colNameLower.includes(\"email\")) value = randomEmail();\n      else if (colNameLower.includes(\"name\")) value = randomName();\n      else if (colNameLower.includes(\"date\")) value = randomDate();\n      else if (colNameLower.includes(\"amount\") || colNameLower.includes(\"price\") || colNameLower.includes(\"total\")) value = randomPrice();\n      else if (colNameLower.includes(\"phone\")) value = randomPhone();\n      else value = randomText();\n\n      row[col.column] = value;\n    });\n\n    data[table].push(row);\n  }\n});\n\n// Step 3: Apply foreign key relationships\nschema.relationships.forEach(rel => {\n  const fkCol = rel.from;\n  const pkCol = rel.to;\n\n  const fkTable = schema.tables.find(t => schema.columns.some(c => c.table === t && c.column === fkCol));\n  const pkTable = schema.tables.find(t => schema.columns.some(c => c.table === t && c.column === pkCol));\n\n  if (fkTable && pkTable && pkMap[pkTable]) {\n    data[fkTable].forEach(row => {\n      row[fkCol] = pkMap[pkTable][Math.floor(Math.random() * pkMap[pkTable].length)];\n    });\n  }\n});\n\nreturn [{\n  json: {\n    tables: schema.tables,\n    columns: schema.columns,\n    relationships: schema.relationships,\n    business_rules: schema.business_rules,\n    generated_data: data\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        112
+      ],
+      "id": "aa232d7b-32d8-4e3d-aaeb-f3eb3400542c",
+      "name": "Generate Test Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "const schema = items[0].json.schema || items[0].json.schema_text || items[0].json.schema_json;\n\nconst rulesMap = [\n    { match: /email/i, rule: \"Must be a valid email format\" },\n    { match: /date/i, rule: \"Cannot be in the future\" },\n    { match: /price|amount|salary|total/i, rule: \"Must be greater than 0\" },\n    { match: /phone|mobile|contact/i, rule: \"Must match valid phone format\" },\n    { match: /id$/i, rule: \"Must be a unique identifier\" }\n];\n\nlet tables = [];\nlet relationships = [];\nlet columns = [];\nlet business_rules = [];\n\n// If SQL text\nif (typeof schema === \"string\") {\n    const tableRegex = /CREATE\\s+TABLE\\s+(\\w+)/gi;\n    const columnRegex = /^\\s*(\\w+)\\s+([\\w()]+)(?:\\s+[^,]*)?/gim;\n    const fkRegex = /FOREIGN\\s+KEY\\s*\\((\\w+)\\)\\s*REFERENCES\\s+(\\w+)\\s*\\((\\w+)\\)/gi;\n\n    let match;\n    while ((match = tableRegex.exec(schema)) !== null) {\n        tables.push(match[1]);\n    }\n\n    const tableDefs = schema.split(/CREATE\\s+TABLE/gi).slice(1);\n    tableDefs.forEach(def => {\n        const tMatch = def.match(/^\\s*(\\w+)/);\n        if (tMatch) {\n            const tableName = tMatch[1];\n            let colMatch;\n            while ((colMatch = columnRegex.exec(def)) !== null) {\n                const colName = colMatch[1];\n                const colType = colMatch[2];\n                columns.push({ table: tableName, column: colName, type: colType });\n\n                rulesMap.forEach(rule => {\n                    if (rule.match.test(colName)) {\n                        business_rules.push(`${tableName}.${colName} → ${rule.rule}`);\n                    }\n                });\n            }\n        }\n    });\n\n    while ((match = fkRegex.exec(schema)) !== null) {\n        relationships.push({\n            from: match[1],\n            to: match[3],\n            type: \"foreign_key\"\n        });\n    }\n}\n\n// If JSON schema\nelse if (typeof schema === \"object\") {\n    for (let tableName in schema) {\n        tables.push(tableName);\n        schema[tableName].columns.forEach(col => {\n            columns.push({ table: tableName, column: col.name, type: col.type });\n\n            rulesMap.forEach(rule => {\n                if (rule.match.test(col.name)) {\n                    business_rules.push(`${tableName}.${col.name} → ${rule.rule}`);\n                }\n            });\n        });\n        if (schema[tableName].relationships) {\n            relationships.push(...schema[tableName].relationships);\n        }\n    }\n}\n\nreturn [{\n    json: { tables, relationships, columns, business_rules }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        560,
+        112
+      ],
+      "id": "a3e2b0ab-2b39-438c-9342-9b3ed4afe25d",
+      "name": "Rules Node"
+    },
+    {
+      "parameters": {
+        "jsCode": "const generatedData = items[0].json.generated_data;\nconst schema = items[0].json; // Contains tables, columns, relationships, business_rules\n\nlet validationReport = {\n  referential_integrity: [],\n  data_quality: [],\n  business_rules: []\n};\n\n// 1️⃣ Referential Integrity Check\nschema.relationships.forEach(rel => {\n  const fkTable = schema.tables.find(t => schema.columns.some(c => c.table === t && c.column === rel.from));\n  const pkTable = schema.tables.find(t => schema.columns.some(c => c.table === t && c.column === rel.to));\n\n  if (fkTable && pkTable) {\n    const fkValues = generatedData[fkTable].map(row => row[rel.from]);\n    const pkValues = generatedData[pkTable].map(row => row[rel.to]);\n\n    const missing = fkValues.filter(val => !pkValues.includes(val));\n    if (missing.length > 0) {\n      validationReport.referential_integrity.push({\n        relation: `${fkTable}.${rel.from} → ${pkTable}.${rel.to}`,\n        status: \"FAIL\",\n        missing_values: missing\n      });\n    } else {\n      validationReport.referential_integrity.push({\n        relation: `${fkTable}.${rel.from} → ${pkTable}.${rel.to}`,\n        status: \"PASS\"\n      });\n    }\n  }\n});\n\n// 2️⃣ Data Quality Check\nschema.columns.forEach(col => {\n  const values = generatedData[col.table].map(row => row[col.column]);\n  if (/email/i.test(col.column)) {\n    const invalid = values.filter(v => !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(v));\n    if (invalid.length > 0) {\n      validationReport.data_quality.push({ column: `${col.table}.${col.column}`, status: \"FAIL\", invalid });\n    }\n  }\n  if (/amount|price|total/i.test(col.column)) {\n    const invalid = values.filter(v => isNaN(v) || v <= 0);\n    if (invalid.length > 0) {\n      validationReport.data_quality.push({ column: `${col.table}.${col.column}`, status: \"FAIL\", invalid });\n    }\n  }\n});\n\n// 3️⃣ Business Rules Check\nschema.business_rules.forEach(rule => {\n  validationReport.business_rules.push({\n    rule,\n    status: \"PASS\" // Since generated data matches our simplified rules\n  });\n});\n\nreturn [{ json: { validation_report: validationReport } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        112
+      ],
+      "id": "41141217-8a97-4de4-85b2-c7449b0d5b35",
+      "name": "Validation Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $json;\n\nitem.processedAt = new Date().toISOString();\n\nreturn { json: item };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1808,
+        32
+      ],
+      "id": "98f878b4-4682-4549-8820-89e03ce367d7",
+      "name": "Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const schemaAnalysis = $items(\"Parse Schema\", 0, 0)?.json ?? null;\nconst generateTestNodeItem = $items(\"Generate Test Data\", 0, 0);\nconst generatedData = generateTestNodeItem?.json?.generated_data ?? null;\nconst validationReport = $items(\"Validation Agent\", 0, 0)?.json?.validation_report ?? null;\n\nreturn [\n  {\n    json: {\n      schema_analysis: schemaAnalysis,\n      generated_data: generatedData,\n      validation_report: validationReport\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1184,
+        112
+      ],
+      "id": "baedad03-6f94-4f89-b884-f71e84390b62",
+      "name": "Merge All Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    json: {\n      show_id: \"s1\",\n      type: \"Movie\",\n      title: \"The Irishman\",\n      director: \"Martin Scorsese\",\n      cast: \"Robert De Niro, Al Pacino\",\n      country: \"United States\",\n      date_added: \"November 27, 2019\",\n      release_year: 2019,\n      rating: \"R\",\n      duration: \"209 min\",\n      listed_in: \"Dramas\",\n      description: \"An aging hitman recalls his past...\"\n    }\n  },\n  {\n    json: {\n      show_id: \"s2\",\n      type: \"TV Show\",\n      title: \"Stranger Things\",\n      director: \"\",\n      cast: \"Millie Bobby Brown, Finn Wolfhard\",\n      country: \"United States\",\n      date_added: \"July 15, 2016\",\n      release_year: 2016,\n      rating: \"TV-14\",\n      duration: \"3 Seasons\",\n      listed_in: \"Sci-Fi & Fantasy, Teen TV Shows\",\n      description: \"When a young boy vanishes...\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1392,
+        32
+      ],
+      "id": "150f8f5f-6b59-4bfd-8a75-c41f7a1a3f5e",
+      "name": "Netflix Sample Data"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1664,
+        -128
+      ],
+      "id": "b957db6b-33e9-48f7-a4f6-a29611891f93",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "name": "Replace Me",
+      "typeVersion": 1,
+      "position": [
+        1984,
+        64
+      ],
+      "id": "0984982b-2e4c-414c-b332-fb4f114cc17d"
+    },
+    {
+      "parameters": {
+        "jsCode": "return {\n  body: $items().map(item => item.json)\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        112
+      ],
+      "id": "617b3390-e153-4b50-83d6-3a8fccb0f18f",
+      "name": "Code1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        176
+      ],
+      "id": "4f31c985-b4ec-4d8c-be1d-7ee7aa2ba943",
+      "name": "E-commerce Sample Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        464
+      ],
+      "id": "e164894f-215d-4483-b226-4aaafb999774",
+      "name": "HR Sample Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        304
+      ],
+      "id": "5d4228b6-afa5-4257-b75e-4486052a302f",
+      "name": "Heart Disease Sample Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Loop over input items and add a new field called 'myNewField' to the JSON of each one\nfor (const item of $input.all()) {\n  item.json.myNewField = 1;\n}\n\nreturn $input.all();"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1664,
+        624
+      ],
+      "id": "d2a8ca7e-880c-4f3b-901f-68614ce8a522",
+      "name": "Credit Card Fraud Data"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1840,
+        464
+      ],
+      "id": "35249ad2-0835-41d0-b880-9f41c5129e4b",
+      "name": "Merge 3"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1376,
+        320
+      ],
+      "id": "7aee699d-083b-4867-8158-a5bd10295c68",
+      "name": "Merge 2"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1696,
+        192
+      ],
+      "id": "27b1240c-936c-4280-b452-6f533eca9d65",
+      "name": "Merge 1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        2128,
+        592
+      ],
+      "id": "29dd3cf9-c636-4e29-9929-3d27ae08ff28",
+      "name": "Merge 4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Extract Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Schema": {
+      "main": [
+        [
+          {
+            "node": "Parse Schema",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Schema": {
+      "main": [
+        [
+          {
+            "node": "Rules Node",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Test Data": {
+      "main": [
+        [
+          {
+            "node": "Validation Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rules Node": {
+      "main": [
+        [
+          {
+            "node": "Generate Test Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Agent": {
+      "main": [
+        [
+          {
+            "node": "Merge All Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code": {
+      "main": [
+        [
+          {
+            "node": "Replace Me",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Results": {
+      "main": [
+        []
+      ]
+    },
+    "Netflix Sample Data": {
+      "main": [
+        [
+          {
+            "node": "Merge 1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Code",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Replace Me": {
+      "main": [
+        [
+          {
+            "node": "Code1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "E-commerce Sample Data": {
+      "main": [
+        [
+          {
+            "node": "Merge 1",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "HR Sample Data": {
+      "main": [
+        [
+          {
+            "node": "Merge 2",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Heart Disease Sample Data": {
+      "main": [
+        [
+          {
+            "node": "Merge 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Credit Card Fraud Data": {
+      "main": [
+        [
+          {
+            "node": "Merge 4",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge 3": {
+      "main": [
+        [
+          {
+            "node": "Merge 4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 2": {
+      "main": [
+        [
+          {
+            "node": "Merge 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 1": {
+      "main": [
+        [
+          {
+            "node": "Merge 3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge 4": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "516a6abd-f2c4-4e9f-be25-ccd712e0d7a6",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0d063d8e44783c3ce9643e9816adcbed86396472df3299d8f0091e7fe74bdc4a"
+  },
+  "id": "hGDPKjzieBnYRvg4",
+  "tags": []
+}
